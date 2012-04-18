@@ -1,0 +1,13 @@
+{
+  "www" : false,
+
+  "domains" : [
+    "b-token.com",
+    "b-token.eu",
+    "b-token.be",
+    "b-token.de",
+    "b-token.fr",
+    "b-token.it",
+    "b-token.es"
+  ]
+}
