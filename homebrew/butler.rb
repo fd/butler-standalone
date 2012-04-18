@@ -5,6 +5,8 @@ class Butler < Formula
   homepage 'http://github.com/fd/butler'
   md5 'e3dafa46a6bc08d056e1ee1a831a0e5f'
 
+  skip_clean ['bin']
+
   def install
     bin.install "butler"
   end
