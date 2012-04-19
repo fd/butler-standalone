@@ -11,16 +11,21 @@ import "regexp"
 import "strings"
 import "path/filepath"
 import "os"
+import "io"
+import "bytes"
 import "encoding/json"
 
+import "math/rand"
+import "hash/fnv"
 import pqueue "github.com/nu7hatch/gopqueue"
+import bloom  "github.com/dgryski/dgobloom"
 
 type Crawler struct {
   www       bool
   domains   map[string]bool
   queue   * pqueue.Queue
   waiter    sync.WaitGroup
-  known     map[string]bool
+  known     bloom.BloomFilter
 
   report_dir string
   reporters  []Reporter
@@ -40,11 +45,19 @@ func New(report_dir string)(c * Crawler, err error){
 
   report_dir = filepath.Clean(report_dir)
 
+  salts_needed := bloom.SaltsRequired(100000, 0.001)
+  salts := make([]uint32, salts_needed)
+  for i := uint(0); i < salts_needed; i++ {
+    salts[i] = rand.Uint32()
+  }
+
+  b := bloom.NewBloomFilter(100000, 0.001, fnv.New32(), salts)
+
   c = &Crawler{
     report_dir : report_dir,
     domains    : make(map[string]bool),
     queue      : pqueue.New(0),
-    known      : make(map[string]bool),
+    known      : b,
     reporters  : make([]Reporter, 0),
   }
   return
@@ -52,6 +65,12 @@ func New(report_dir string)(c * Crawler, err error){
 
 func (c * Crawler) RegisterReporter (reporter Reporter) {
   c.reporters = append(c.reporters, reporter)
+}
+
+func (c * Crawler) report_found (u * url.URL) {
+  for _, reporter := range c.reporters {
+    reporter.Found(u)
+  }
 }
 
 func (c * Crawler) report_success (u * url.URL, status uint) {
@@ -92,11 +111,15 @@ func (c * Crawler) enqueue (link * url.URL, base * url.URL) {
     link.Host = c.normalize_host(link.Host)
   }
 
-  if _, present := c.known[link.String()]; present {
+  /*if _, present := c.known[link.String()]; present {*/
+  if c.known.Exists([]byte(link.String())) {
     return
   }
 
-  c.known[link.String()] = true
+  c.known.Insert([]byte(link.String()))
+  /*c.known[link.String()] = true*/
+
+  c.report_found(link)
 
   if link.Scheme == "http" {
     if c.domains[link.Host] {
@@ -126,9 +149,10 @@ func (c * Crawler) Run (pool_size int) {
 
   for i := 0; i <= pool_size; i ++ {
     go func(){
+      var buf bytes.Buffer
       for{
         t := c.queue.Dequeue()
-        c.process_url(t.(*task).url)
+        c.process_url(&buf, t.(*task).url)
         c.waiter.Done()
       }
     }()
@@ -143,15 +167,21 @@ func (c * Crawler) Run (pool_size int) {
 
 var pattern * regexp.Regexp
 
-func (c * Crawler) process_url (page * url.URL) {
+func (c * Crawler) process_url (buf * bytes.Buffer, page * url.URL) {
+  defer buf.Reset()
+
   resp, err := http.Get(page.String())
   if err != nil {
     c.report_error(page, 0, err)
     return
   }
-
   defer resp.Body.Close()
-  body, err := ioutil.ReadAll(resp.Body)
+
+  _, err = io.Copy(buf, resp.Body)
+  if err != nil {
+    c.report_error(page, 0, err)
+    return
+  }
 
   // check for redirects
 
@@ -165,9 +195,9 @@ func (c * Crawler) process_url (page * url.URL) {
     return
   }
 
-  links := pattern.FindAllStringSubmatch(string(body), -1)
+  links := pattern.FindAllSubmatch(buf.Bytes(), -1)
   for _, m := range links {
-    link := m[1]
+    link := string(m[1])
 
     link = html.UnescapeString(link)
 

@@ -29,10 +29,12 @@ ARCH_TARGETS = %w( 386 amd64 )
 
 DEPENDENCIES = %w(
   github.com/nu7hatch/gopqueue
+  github.com/dgryski/dgobloom
 )
 
 PACKAGES = %w(
   github.com/nu7hatch/gopqueue
+  github.com/dgryski/dgobloom
 )
 
 TOOLS = {

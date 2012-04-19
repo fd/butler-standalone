@@ -5,6 +5,9 @@ import "net/url"
 type Reporter interface {
   Start()
 
+  // Found (u * url.URL)
+  Found(*url.URL)
+
   // Error(url *url.URL, status uint)
   Success(*url.URL, uint)
 

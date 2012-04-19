@@ -14,8 +14,11 @@ func (r * IgnoreReporter) Start () {
   r.ignored = make(map[string]*ignore)
 }
 
+func (r * IgnoreReporter) Found (u * url.URL) {
+}
+
 func (r * IgnoreReporter) Finish (report string) {
-  list := make([]*ignore, 0, 100)
+  list := make([]*ignore, 0, 10000)
 
   for _, ignore := range r.ignored {
     list = append(list, ignore)

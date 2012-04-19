@@ -14,6 +14,9 @@ func (r * SitemapReporter) Start () {
   r.urls = make(map[string]*list.List)
 }
 
+func (r * SitemapReporter) Found (u * url.URL) {
+}
+
 func (r * SitemapReporter) Finish (report string) {
   os.Mkdir(path.Join(report, "sitemaps"), 0755)
 

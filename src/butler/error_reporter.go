@@ -14,8 +14,11 @@ func (r * ErrorReporter) Start () {
   r.errors = make(map[string]*err)
 }
 
+func (r * ErrorReporter) Found (u * url.URL) {
+}
+
 func (r * ErrorReporter) Finish (report string) {
-  list := make([]*err, 0, 100)
+  list := make([]*err, 0, 10000)
 
   for _, err := range r.errors {
     list = append(list, err)
