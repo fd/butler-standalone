@@ -1,125 +1,95 @@
+OS      = %w( darwin linux )
+ARCH    = %w( 386 amd64 )
+VERSION = File.read("VERSION").strip
 
-def with_env(env)
-  _env = {}
+LIBS    = []
+TOOLS   = []
+DEPS    = []
 
-  env.each do |k,v|
-    _env[k] = ENV[k]
-    ENV[k] = v
+ENV['GOPATH'] = Dir.pwd
+ENV['CGO_ENABLED'] = '0'
+
+specs = {}
+package_data = `go list -f '{{.ImportPath}}:{{.Name}}{{range .Imports}}:{{.}}{{end}}' ./...`
+package_data.strip.split("\n").each do |line|
+  path, name, *deps = *line.split(":")
+  specs[path] = deps
+
+  if name == "main"
+    TOOLS << path
+  else
+    LIBS  << path
   end
+end
 
-  yield
+specs.each do |path, deps|
+  specs[path] = LIBS & deps
+end
 
-ensure
-  _env.each do |k,v|
-    if v
-      ENV[k] = v
-    else
-      ENV.delete(k)
+file "src/butler/version.go" => "VERSION" do
+  File.open("src/butler/version.go", "w+", 0644) do |f|
+    f.puts "package main"
+    f.puts "const Version = `#{VERSION}`"
+  end
+end
+
+OS.each do |os|
+  ARCH.each do |arch|
+    prefix = "dist/butler-#{VERSION}-#{os}-#{arch}"
+    bindir = "#{prefix}/bin"
+    directory bindir
+
+    pkg_deps = []
+
+    LIBS.each do |lib|
+      deps  = specs[lib].map {|d| "pkg/#{os}_#{arch}/#{d}.a" }
+      deps += FileList["src/#{lib}/*.go"]
+      file "pkg/#{os}_#{arch}/#{lib}.a" => deps do
+        ENV['GOARCH'] = arch
+        ENV['GOOS']   = os
+        sh "go install #{lib}"
+      end
     end
-  end
-end
 
-GO_ROOT      = `go env GOROOT`.strip
-GO_PATH      = File.expand_path('..', __FILE__)
-GO_HOST_OS   = `go env GOHOSTOS`.strip
-GO_HOST_ARCH = `go env GOHOSTARCH`.strip
+    TOOLS.each do |tool|
+      deps  = specs[tool].map {|d| "pkg/#{os}_#{arch}/#{d}.a" }
+      deps += FileList["src/#{tool}/*.go"]
+      deps += [bindir]
+      bin = tool.gsub("/", "-").gsub(/-cli$/, '')
 
-OS_TARGETS   = %w( darwin linux freebsd openbsd windows )
-ARCH_TARGETS = %w( 386 amd64 )
-
-DEPENDENCIES = %w(
-  github.com/nu7hatch/gopqueue
-  github.com/dgryski/dgobloom
-)
-
-PACKAGES = %w(
-  github.com/nu7hatch/gopqueue
-  github.com/dgryski/dgobloom
-)
-
-TOOLS = {
-  "butler" => "butler"
-}
-
-LIBS = Hash.new { |h,k| h[k] = [] }
-BINS = Hash.new { |h,k| h[k] = [] }
-PKGS = Hash.new { |h,k| h[k] = [] }
-
-directory "dist"
-OS_TARGETS.each do |os|
-  ARCH_TARGETS.each do |arch|
-    directory "bin/#{os}_#{arch}"
-  end
-end
-
-PACKAGES.each do |package|
-  OS_TARGETS.each do |os|
-    ARCH_TARGETS.each do |arch|
-
-      LIBS["#{os}_#{arch}"] << "pkg/#{os}_#{arch}/#{package}.a"
-      deps = FileList["src/#{package}/*.go"]
-
-      file "pkg/#{os}_#{arch}/#{package}.a" => deps do
-        with_env "GOPATH" => GO_PATH, "GOOS" => os, "GOARCH" => arch, "CGO_ENABLED" => "0" do
-          sh "go install #{package}"
-        end
+      if tool == "butler"
+        deps << "src/butler/version.go"
       end
 
-    end
-  end
-end
-
-TOOLS.each do |package, tool|
-  OS_TARGETS.each do |os|
-    ARCH_TARGETS.each do |arch|
-
-      BINS["#{os}_#{arch}"] << "bin/#{os}_#{arch}/#{tool}"
-      deps  = FileList["src/#{package}/*.go"]
-      deps += ["bin/#{os}_#{arch}"]
-      deps += LIBS["#{os}_#{arch}"]
-
-      file "bin/#{os}_#{arch}/#{tool}" => deps do
-        with_env "GOPATH" => GO_PATH, "GOOS" => os, "GOARCH" => arch, "CGO_ENABLED" => "0" do
-          sh "go build -o bin/#{os}_#{arch}/#{tool} src/#{package}/*.go"
-        end
+      file "#{bindir}/#{bin}" => deps do
+        ENV['GOARCH'] = arch
+        ENV['GOOS']   = os
+        sh "go build -o #{bindir}/#{bin} src/#{tool}/*.go"
       end
+      pkg_deps << "#{bindir}/#{bin}"
+    end
 
-      PKGS["#{os}_#{arch}"] << "dist/#{tool}-#{os}_#{arch}.tar.gz"
-      deps  = ["bin/#{os}_#{arch}/#{tool}"]
-      deps += ["dist"]
+    file "#{prefix}/README.md" => ["README.md", prefix] do
+      cp "README.md", "#{prefix}/README.md"
+    end
+    pkg_deps << "#{prefix}/README.md"
 
-      file "dist/#{tool}-#{os}_#{arch}.tar.gz" => deps do
-        dst = File.expand_path("dist/#{tool}-#{os}_#{arch}.tar.gz")
-        Dir.chdir("bin/#{os}_#{arch}") do
-          sh "tar czf #{dst} #{tool}"
-        end
+    file "dist/butler-#{VERSION}-#{os}-#{arch}.tar.gz" => pkg_deps do
+      Dir.chdir "dist" do
+        sh "tar -czf butler-#{VERSION}-#{os}-#{arch}.tar.gz butler-#{VERSION}-#{os}-#{arch}"
       end
-
     end
+    DEPS << "dist/butler-#{VERSION}-#{os}-#{arch}.tar.gz"
+
   end
 end
 
-task :clean do
-  sh "rm -rf bin"
-  sh "rm -rf pkg"
-  sh "rm -rf dist"
-end
 
-task :update do
-  DEPENDENCIES.each do |dep|
-    with_env "GOPATH" => GO_PATH do
-      sh "go get -d -u #{dep}"
-    end
-  end
-end
-
-task :build => BINS.values.flatten
-
-task :package => PKGS.values.flatten
-
-task :local => BINS["#{GO_HOST_OS}_#{GO_HOST_ARCH}"]
-
+desc "Setup the cross-compiler environment"
 task :setup do
+  ENV.delete('GOPATH')
+  ENV.delete('CGO_ENABLED')
+  GO_ROOT = `go env GOROOT`.strip
   Dir.chdir(GO_ROOT + '/src') do
 
     %w( 8 6 ).each do |c|
@@ -128,16 +98,29 @@ task :setup do
       end
     end
 
-    OS_TARGETS.each do |os|
-      ARCH_TARGETS.each do |arch|
-        with_env "GOOS" => os, "GOARCH" => arch do
-          sh "go tool dist install -v pkg/runtime"
-          sh "go install -v -a std || true"
-        end
+    OS.each do |os|
+      ARCH.each do |arch|
+        ENV['GOARCH'] = arch
+        ENV['GOOS']   = os
+        sh "go tool dist install -v pkg/runtime"
+        sh "go install -v -a std || true"
       end
     end
 
   end
 end
+
+desc "Remove all build targets"
+task :clean do
+  rm_rf 'pkg'
+  rm_rf 'dist'
+end
+
+
+desc "Build all targets"
+task :build => DEPS
+
+desc "Build a new release"
+task :dist => [:clean, :build]
 
 task :default => :build

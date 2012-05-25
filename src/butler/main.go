@@ -21,14 +21,15 @@ import pqueue "github.com/nu7hatch/gopqueue"
 import bloom  "github.com/dgryski/dgobloom"
 
 type Crawler struct {
-  www       bool
-  domains   map[string]bool
-  queue   * pqueue.Queue
-  waiter    sync.WaitGroup
-  known     bloom.BloomFilter
+  www         bool
+  concurrency int
+  domains     map[string]bool
+  queue     * pqueue.Queue
+  waiter      sync.WaitGroup
+  known       bloom.BloomFilter
 
-  report_dir string
-  reporters  []Reporter
+  report_dir  string
+  reporters   []Reporter
 }
 
 type task struct {
@@ -111,13 +112,11 @@ func (c * Crawler) enqueue (link * url.URL, base * url.URL) {
     link.Host = c.normalize_host(link.Host)
   }
 
-  /*if _, present := c.known[link.String()]; present {*/
   if c.known.Exists([]byte(link.String())) {
     return
   }
 
   c.known.Insert([]byte(link.String()))
-  /*c.known[link.String()] = true*/
 
   c.report_found(link)
 
@@ -139,7 +138,7 @@ func (c * Crawler) enqueue (link * url.URL, base * url.URL) {
   /*c.queue <- u.String()*/
 }
 
-func (c * Crawler) Run (pool_size int) {
+func (c * Crawler) Run () {
   os.RemoveAll(c.report_dir)
   os.MkdirAll(c.report_dir, 0755)
 
@@ -147,7 +146,7 @@ func (c * Crawler) Run (pool_size int) {
     reporter.Start()
   }
 
-  for i := 0; i <= pool_size; i ++ {
+  for i := 0; i <= c.concurrency; i ++ {
     go func(){
       var buf bytes.Buffer
       for{
@@ -243,6 +242,11 @@ func (c * Crawler) Load (path string) (err error) {
 
   c.www = config.Www
 
+  if config.Concurrency <= 0 {
+    config.Concurrency = 2
+  }
+  c.concurrency = config.Concurrency
+
   for _, domain := range config.Domains {
     domain = c.normalize_host(domain)
     c.allow(domain)
@@ -257,8 +261,9 @@ func (c * Crawler) Load (path string) (err error) {
 }
 
 type Config struct {
-  Www     bool     `json:"www"`
-  Domains []string `json:"domains"`
+  Concurrency int      `json:"concurrency"`
+  Www         bool     `json:"www"`
+  Domains     []string `json:"domains"`
 }
 
 func init() {
@@ -267,8 +272,8 @@ func init() {
   if err != nil { panic(err) }
 }
 
-var config_file = flag.String("config", "config.json", "The path to the config file.")
-var report_dir  = flag.String("report", "report",      "The path to the report directory.")
+var config_file = flag.String("config", ".butler.json", "The path to the config file.")
+var report_dir  = flag.String("report", "report",       "The path to the report directory.")
 
 func main() {
   flag.Parse()
@@ -282,5 +287,5 @@ func main() {
 
   err = c.Load(*config_file)
   if err != nil { panic(err) }
-  c.Run(2)
+  c.Run()
 }
