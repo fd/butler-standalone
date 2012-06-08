@@ -1,7 +1,6 @@
 package main
 
 import "sync"
-import "flag"
 import "net/http"
 import "net/url"
 import "io/ioutil"
@@ -9,7 +8,6 @@ import "fmt"
 import "html"
 import "regexp"
 import "strings"
-import "path/filepath"
 import "os"
 import "io"
 import "bytes"
@@ -17,8 +15,10 @@ import "encoding/json"
 
 import "math/rand"
 import "hash/fnv"
+
 import pqueue "github.com/nu7hatch/gopqueue"
 import bloom  "github.com/dgryski/dgobloom"
+import "haraway/common/options"
 
 type Crawler struct {
   www         bool
@@ -41,10 +41,6 @@ func (t * task) Less (other interface{}) (bool) {
 }
 
 func New(report_dir string)(c * Crawler, err error){
-  report_dir, err = filepath.Abs(report_dir)
-  if err != nil { return }
-
-  report_dir = filepath.Clean(report_dir)
 
   salts_needed := bloom.SaltsRequired(100000, 0.001)
   salts := make([]uint32, salts_needed)
@@ -139,7 +135,6 @@ func (c * Crawler) enqueue (link * url.URL, base * url.URL) {
 }
 
 func (c * Crawler) Run () {
-  os.RemoveAll(c.report_dir)
   os.MkdirAll(c.report_dir, 0755)
 
   for _, reporter := range c.reporters {
@@ -272,20 +267,49 @@ func init() {
   if err != nil { panic(err) }
 }
 
-var config_file = flag.String("config", ".butler.json", "The path to the config file.")
-var report_dir  = flag.String("report", "report",       "The path to the report directory.")
+
+const desc = `
+butler - A simple sitemap generator and error reporter.
+Usage: butler [--report=] [--config=]
+--
+report=  -r,--report=   Path to the report directory.
+config=  -c,--config=   The path to the config file.
+--
+--
+--
+
+`
 
 func main() {
-  flag.Parse()
-
-  c, err := New(*report_dir)
+  spec, err := options.New(desc)
   if err != nil { panic(err) }
+
+  opts, err := spec.Parse(os.Args, os.Environ())
+
+  if err != nil {
+    spec.PrintUsageWithError(err)
+  }
+
+  if len(opts.Args) != 0 {
+    spec.PrintUsageAndExit()
+  }
+
+  config := opts.Get("config")
+  if config == "" { config = ".butler.json" }
+
+  report := opts.Get("report")
+  if report == "" { report = "report" }
+
+  c, err := New(report)
+  if err != nil { panic(err) }
+
   c.RegisterReporter(new(SitemapReporter))
   c.RegisterReporter(new(StdoutReporter))
   c.RegisterReporter(new(ErrorReporter))
   c.RegisterReporter(new(IgnoreReporter))
 
-  err = c.Load(*config_file)
+  err = c.Load(config)
   if err != nil { panic(err) }
+
   c.Run()
 }
