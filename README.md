@@ -11,5 +11,5 @@ A simple web crawler for generating sitemaps and reporting errors.
 ## Install
 
 ```bash
-brew install https://raw.github.com/fd/butler/master/homebrew/butler.rb
+brew install https://raw.github.com/fd/butler-standalone/master/homebrew/butler.rb
 ```
